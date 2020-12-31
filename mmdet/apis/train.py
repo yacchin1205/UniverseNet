@@ -6,7 +6,7 @@ from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
 from mmcv.runner import (HOOKS, DistSamplerSeedHook, EpochBasedRunner,
                          OptimizerHook, build_optimizer)
 from mmcv.utils import build_from_cfg
-from tools.rearrange_weights import rearrange_classes
+from universenet.tools.rearrange_weights import rearrange_classes
 
 from mmdet.core import DistEvalHook, EvalHook, Fp16OptimizerHook
 from mmdet.datasets import build_dataloader, build_dataset
