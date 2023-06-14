@@ -1,3 +1,4 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import os.path as osp
 import pickle
 import shutil
@@ -7,9 +8,10 @@ import time
 import mmcv
 import torch
 import torch.distributed as dist
+from mmcv.image import tensor2imgs
 from mmcv.runner import get_dist_info
 
-from mmdet.core import encode_mask_results, tensor2imgs
+from mmdet.core import encode_mask_results
 
 
 def single_gpu_test(model,
@@ -20,6 +22,7 @@ def single_gpu_test(model,
     model.eval()
     results = []
     dataset = data_loader.dataset
+    PALETTE = getattr(dataset, 'PALETTE', None)
     prog_bar = mmcv.ProgressBar(len(dataset))
     for i, data in enumerate(data_loader):
         with torch.no_grad():
@@ -50,6 +53,9 @@ def single_gpu_test(model,
                 model.module.show_result(
                     img_show,
                     result[i],
+                    bbox_color=PALETTE,
+                    text_color=PALETTE,
+                    mask_color=PALETTE,
                     show=show,
                     out_file=out_file,
                     score_thr=show_score_thr)
@@ -58,6 +64,13 @@ def single_gpu_test(model,
         if isinstance(result[0], tuple):
             result = [(bbox_results, encode_mask_results(mask_results))
                       for bbox_results, mask_results in result]
+        # This logic is only used in panoptic segmentation test.
+        elif isinstance(result[0], dict) and 'ins_results' in result[0]:
+            for j in range(len(result)):
+                bbox_results, mask_results = result[j]['ins_results']
+                result[j]['ins_results'] = (bbox_results,
+                                            encode_mask_results(mask_results))
+
         results.extend(result)
 
         for _ in range(batch_size):
@@ -98,6 +111,13 @@ def multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
             if isinstance(result[0], tuple):
                 result = [(bbox_results, encode_mask_results(mask_results))
                           for bbox_results, mask_results in result]
+            # This logic is only used in panoptic segmentation test.
+            elif isinstance(result[0], dict) and 'ins_results' in result[0]:
+                for j in range(len(result)):
+                    bbox_results, mask_results = result[j]['ins_results']
+                    result[j]['ins_results'] = (
+                        bbox_results, encode_mask_results(mask_results))
+
         results.extend(result)
 
         if rank == 0:
@@ -124,7 +144,8 @@ def collect_results_cpu(result_part, size, tmpdir=None):
                                 dtype=torch.uint8,
                                 device='cuda')
         if rank == 0:
-            tmpdir = tempfile.mkdtemp()
+            mmcv.mkdir_or_exist('.dist_test')
+            tmpdir = tempfile.mkdtemp(dir='.dist_test')
             tmpdir = torch.tensor(
                 bytearray(tmpdir.encode()), dtype=torch.uint8, device='cuda')
             dir_tensor[:len(tmpdir)] = tmpdir

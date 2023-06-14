@@ -1,7 +1,6 @@
 # model settings
 model = dict(
     type='GFL',
-    pretrained='open-mmlab://resnet50_v1c',
     backbone=dict(
         type='ResNet',
         depth=50,
@@ -13,7 +12,9 @@ model = dict(
         norm_eval=False,
         style='pytorch',
         dcn=dict(type='DCN', deform_groups=1, fallback_on_stride=False),
-        stage_with_dcn=(False, False, False, True)),
+        stage_with_dcn=(False, False, False, True),
+        init_cfg=dict(
+            type='Pretrained', checkpoint='open-mmlab://resnet50_v1c')),
     neck=[
         dict(
             type='FPN',
@@ -52,16 +53,16 @@ model = dict(
             loss_weight=1.0),
         loss_dfl=dict(type='DistributionFocalLoss', loss_weight=0.25),
         reg_max=16,
-        loss_bbox=dict(type='GIoULoss', loss_weight=2.0)))
-# training and testing settings
-train_cfg = dict(
-    assigner=dict(type='ATSSAssigner', topk=9),
-    allowed_border=-1,
-    pos_weight=-1,
-    debug=False)
-test_cfg = dict(
-    nms_pre=1000,
-    min_bbox_size=0,
-    score_thr=0.05,
-    nms=dict(type='nms', iou_threshold=0.6),
-    max_per_img=100)
+        loss_bbox=dict(type='GIoULoss', loss_weight=2.0)),
+    # training and testing settings
+    train_cfg=dict(
+        assigner=dict(type='ATSSAssigner', topk=9),
+        allowed_border=-1,
+        pos_weight=-1,
+        debug=False),
+    test_cfg=dict(
+        nms_pre=1000,
+        min_bbox_size=0,
+        score_thr=0.05,
+        nms=dict(type='nms', iou_threshold=0.6),
+        max_per_img=100))

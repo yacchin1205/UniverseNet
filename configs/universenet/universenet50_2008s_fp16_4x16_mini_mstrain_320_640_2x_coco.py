@@ -1,5 +1,5 @@
 _base_ = [
-    './models/universenet50_2008s.py',
+    '../universenet/models/universenet50_2008s.py',
     '../_base_/datasets/coco_detection_mini_mstrain_320_640.py',
     '../_base_/schedules/schedule_2x.py', '../_base_/default_runtime.py'
 ]
@@ -14,3 +14,8 @@ optimizer_config = dict(
 lr_config = dict(warmup_iters=1000)
 
 fp16 = dict(loss_scale=512.)
+
+# NOTE: `auto_scale_lr` is for automatically scaling LR,
+# USER SHOULD NOT CHANGE ITS VALUES.
+# base_batch_size = (4 GPUs) x (16 samples per GPU)
+auto_scale_lr = dict(base_batch_size=64)

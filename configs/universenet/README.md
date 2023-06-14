@@ -1,17 +1,25 @@
 # UniverseNet
 
-
 ## Introduction
 
-UniverseNet is a single-stage detector for universal scale detection. Unlike EfficientDet and YOLOv4, it is trained using universal training settings (e.g., 2x schedule, initial lr: 0.01).
+<!-- [ALGORITHM] -->
 
-UniverseNet is the SOTA single-stage detector on the Waymo Open Dataset 2D detection, and achieves the 1st place in the NightOwls Detection Challenge 2020 all objects track.
+UniverseNets are state-of-the-art detectors for universal-scale object detection.
+Please refer to our paper for details.
+https://arxiv.org/abs/2103.14027
 
+```
+@inproceedings{USB_shinya_BMVC2022,
+  title={{USB}: Universal-Scale Object Detection Benchmark},
+  author={Shinya, Yosuke},
+  booktitle={British Machine Vision Conference (BMVC)},
+  year={2022}
+}
+```
 
 ## Example for fine-tuning
 
 For fine-tuning from a COCO pre-trained model, please see [this example](universenet50_2008_fp16_4x2_mstrain_480_960_1x_smallbatch_finetuning_example.py).
-
 
 ## Results and Models
 
@@ -36,7 +44,6 @@ For fine-tuning from a COCO pre-trained model, please see [this example](univers
 - All models except for ATSS+SEPC were trained and evaluated using fp16 (mixed precision).
 - The above UniverseNet (2x) model is a checkpoint at epoch 23. The AP of [a checkpoint at epoch 24](https://github.com/shinya7y/UniverseNet/releases/download/20.06/universenet50_fp16_8x2_mstrain_480_960_2x_coco_20200523_epoch_24-726c5c93.pth) is quite similar (48.9) but slightly worse.
 
-
 ### Faster models
 
 |       Method       | Backbone | Test scale  | Lr schd | Mem (GB) | Inf time (fps) | box AP |                                                                              Download                                                                               |
@@ -48,23 +55,32 @@ For fine-tuning from a COCO pre-trained model, please see [this example](univers
 - 4 GPUs x 16 `samples_per_gpu` for small test scales ((512, 512) and (224, 224)).
   You will be able to use BatchNorm with `norm_eval=False` even on 1 GPU.
 
-
 ### Test scale and test-dev AP
 
-|       Method       | Backbone | Max test scale |  TTA  | Inf time (fps) | box AP (val) | box AP (test-dev) |
-| :----------------: | :------: | :------------: | :---: | :------------: | :----------: | :---------------: |
-|    UniverseNet     |  R2-50   |  (1333, 800)   |   -   |      15.8      |     48.9     |       49.2        |
-|    UniverseNet     |  R2-50   |  (1600, 960)   |   -   |      14.5      |     49.2     |       49.5        |
-| UniverseNet 20.08s |  R-50-C  |  (1333, 800)   |   -   |      31.6      |     46.9     |       47.4        |
-| UniverseNet 20.08  |  R2-50   |  (1333, 800)   |   -   |      24.9      |     48.5     |       48.8        |
-| UniverseNet 20.08d |  R2-101  |  (1333, 800)   |   -   |      11.7      |     50.9     |       51.3        |
-| UniverseNet 20.08d |  R2-101  |  (2000, 1200)  |   5   |       -        |      -       |       53.8        |
-| UniverseNet 20.08d |  R2-101  |  (3000, 1800)  |  13   |       -        |      -       |       54.1        |
+|       Method       | Backbone | Max test scale | TTA | Inf time (fps) | box AP (val) | box AP (test-dev) |
+| :----------------: | :------: | :------------: | :-: | :------------: | :----------: | :---------------: |
+|    UniverseNet     |  R2-50   |  (1333, 800)   |  -  |      15.8      |     48.9     |       49.2        |
+|    UniverseNet     |  R2-50   |  (1600, 960)   |  -  |      14.5      |     49.2     |       49.5        |
+| UniverseNet 20.08s |  R-50-C  |  (1333, 800)   |  -  |      31.6      |     46.9     |       47.4        |
+| UniverseNet 20.08  |  R2-50   |  (1333, 800)   |  -  |      24.9      |     48.5     |       48.8        |
+| UniverseNet 20.08d |  R2-101  |  (1333, 800)   |  -  |      11.7      |     50.9     |       51.3        |
+| UniverseNet 20.08d |  R2-101  |  (2000, 1200)  |  5  |       -        |     53.1     |       53.8        |
+| UniverseNet 20.08d |  R2-101  |  (3000, 1800)  | 13  |       -        |     53.5     |       54.1        |
 
 - TTA: test-time augmentation including horizontal flip and multi-scale testing (numbers denote scales).
 
+<!-- box AP (val)
+0.469 0.652 0.511 0.297 0.508 0.617
+0.485 0.670 0.526 0.306 0.527 0.627
+0.509 0.695 0.554 0.335 0.555 0.658
+0.531 0.707 0.586 0.374 0.574 0.680
+0.535 0.708 0.589 0.369 0.575 0.681
+-->
 
-### Other hyperparameters and details for reproduction
+### Misc.
+
+<details>
+<summary>Other hyperparameters and details for reproduction</summary>
 
 |   Method    | warmup_iters | lcconv_padding | GPUs x samples_per_gpu | box AP |
 | :---------: | :----------: | :------------: | :--------------------: | :----: |
@@ -77,3 +93,5 @@ For fine-tuning from a COCO pre-trained model, please see [this example](univers
 - In the official SEPC implementation, padding values in lconv and cconv (we call `lcconv_padding`) are [set to 0](https://github.com/jshilong/SEPC/issues/13).
   Setting `lcconv_padding` to 1 doesn't affect accuracy.
 - To accelerate training for CVPR competitions, we used 8 GPUs for 9-24 epochs, after using 4 GPUs for 1-8 epochs.
+
+</details>

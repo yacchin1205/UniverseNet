@@ -1,132 +1,140 @@
+# Copyright (c) OpenMMLab. All rights reserved.
+import bisect
 import os.path as osp
-import warnings
 
-from mmcv.runner import Hook
-from torch.utils.data import DataLoader
+import mmcv
+import torch.distributed as dist
+from mmcv.runner import DistEvalHook as BaseDistEvalHook
+from mmcv.runner import EvalHook as BaseEvalHook
+from torch.nn.modules.batchnorm import _BatchNorm
 
 
-class EvalHook(Hook):
-    """Evaluation hook.
+def _calc_dynamic_intervals(start_interval, dynamic_interval_list):
+    assert mmcv.is_list_of(dynamic_interval_list, tuple)
 
-    Notes:
-        If new arguments are added for EvalHook, tools/test.py may be
-    effected.
+    dynamic_milestones = [0]
+    dynamic_milestones.extend(
+        [dynamic_interval[0] for dynamic_interval in dynamic_interval_list])
+    dynamic_intervals = [start_interval]
+    dynamic_intervals.extend(
+        [dynamic_interval[1] for dynamic_interval in dynamic_interval_list])
+    return dynamic_milestones, dynamic_intervals
 
-    Attributes:
-        dataloader (DataLoader): A PyTorch dataloader.
-        start (int, optional): Evaluation starting epoch. It enables evaluation
-            before the training starts if ``start`` <= the resuming epoch.
-            If None, whether to evaluate is merely decided by ``interval``.
-            Default: None.
-        interval (int): Evaluation interval (by epochs). Default: 1.
-        **eval_kwargs: Evaluation arguments fed into the evaluate function of
-            the dataset.
-    """
 
-    def __init__(self, dataloader, start=None, interval=1, **eval_kwargs):
-        if not isinstance(dataloader, DataLoader):
-            raise TypeError('dataloader must be a pytorch DataLoader, but got'
-                            f' {type(dataloader)}')
-        if not interval > 0:
-            raise ValueError(f'interval must be positive, but got {interval}')
-        if start is not None and start < 0:
-            warnings.warn(
-                f'The evaluation start epoch {start} is smaller than 0, '
-                f'use 0 instead', UserWarning)
-            start = 0
-        self.dataloader = dataloader
-        self.interval = interval
-        self.start = start
-        self.eval_kwargs = eval_kwargs
-        self.initial_epoch_flag = True
+class EvalHook(BaseEvalHook):
+
+    def __init__(self, *args, dynamic_intervals=None, **kwargs):
+        super(EvalHook, self).__init__(*args, **kwargs)
+        self.latest_results = None
+
+        self.use_dynamic_intervals = dynamic_intervals is not None
+        if self.use_dynamic_intervals:
+            self.dynamic_milestones, self.dynamic_intervals = \
+                _calc_dynamic_intervals(self.interval, dynamic_intervals)
+
+    def _decide_interval(self, runner):
+        if self.use_dynamic_intervals:
+            progress = runner.epoch if self.by_epoch else runner.iter
+            step = bisect.bisect(self.dynamic_milestones, (progress + 1))
+            # Dynamically modify the evaluation interval
+            self.interval = self.dynamic_intervals[step - 1]
 
     def before_train_epoch(self, runner):
-        """Evaluate the model only at the start of training."""
-        if not self.initial_epoch_flag:
+        """Evaluate the model only at the start of training by epoch."""
+        self._decide_interval(runner)
+        super().before_train_epoch(runner)
+
+    def before_train_iter(self, runner):
+        self._decide_interval(runner)
+        super().before_train_iter(runner)
+
+    def _do_evaluate(self, runner):
+        """perform evaluation and save ckpt."""
+        if not self._should_evaluate(runner):
             return
-        if self.start is not None and runner.epoch >= self.start:
-            self.after_train_epoch(runner)
-        self.initial_epoch_flag = False
 
-    def evaluation_flag(self, runner):
-        """Judge whether to perform_evaluation after this epoch.
-
-        Returns:
-            bool: The flag indicating whether to perform evaluation.
-        """
-        if self.start is None:
-            if not self.every_n_epochs(runner, self.interval):
-                # No evaluation during the interval epochs.
-                return False
-        elif (runner.epoch + 1) < self.start:
-            # No evaluation if start is larger than the current epoch.
-            return False
-        else:
-            # Evaluation only at epochs 3, 5, 7... if start==3 and interval==2
-            if (runner.epoch + 1 - self.start) % self.interval:
-                return False
-        return True
-
-    def after_train_epoch(self, runner):
-        if not self.evaluation_flag(runner):
-            return
         from mmdet.apis import single_gpu_test
+
+        # Changed results to self.results so that MMDetWandbHook can access
+        # the evaluation results and log them to wandb.
         results = single_gpu_test(runner.model, self.dataloader, show=False)
-        self.evaluate(runner, results)
+        self.latest_results = results
+        runner.log_buffer.output['eval_iter_num'] = len(self.dataloader)
+        key_score = self.evaluate(runner, results)
+        # the key_score may be `None` so it needs to skip the action to save
+        # the best checkpoint
+        if self.save_best and key_score:
+            self._save_ckpt(runner, key_score)
 
-    def evaluate(self, runner, results):
-        eval_res = self.dataloader.dataset.evaluate(
-            results, logger=runner.logger, **self.eval_kwargs)
-        for name, val in eval_res.items():
-            runner.log_buffer.output[name] = val
-        runner.log_buffer.ready = True
 
+# Note: Considering that MMCV's EvalHook updated its interface in V1.3.16,
+# in order to avoid strong version dependency, we did not directly
+# inherit EvalHook but BaseDistEvalHook.
+class DistEvalHook(BaseDistEvalHook):
 
-class DistEvalHook(EvalHook):
-    """Distributed evaluation hook.
+    def __init__(self, *args, dynamic_intervals=None, **kwargs):
+        super(DistEvalHook, self).__init__(*args, **kwargs)
+        self.latest_results = None
 
-    Notes:
-        If new arguments are added, tools/test.py may be effected.
+        self.use_dynamic_intervals = dynamic_intervals is not None
+        if self.use_dynamic_intervals:
+            self.dynamic_milestones, self.dynamic_intervals = \
+                _calc_dynamic_intervals(self.interval, dynamic_intervals)
 
-    Attributes:
-        dataloader (DataLoader): A PyTorch dataloader.
-        start (int, optional): Evaluation starting epoch. It enables evaluation
-            before the training starts if ``start`` <= the resuming epoch.
-            If None, whether to evaluate is merely decided by ``interval``.
-            Default: None.
-        interval (int): Evaluation interval (by epochs). Default: 1.
-        tmpdir (str | None): Temporary directory to save the results of all
-            processes. Default: None.
-        gpu_collect (bool): Whether to use gpu or cpu to collect results.
-            Default: False.
-        **eval_kwargs: Evaluation arguments fed into the evaluate function of
-            the dataset.
-    """
+    def _decide_interval(self, runner):
+        if self.use_dynamic_intervals:
+            progress = runner.epoch if self.by_epoch else runner.iter
+            step = bisect.bisect(self.dynamic_milestones, (progress + 1))
+            # Dynamically modify the evaluation interval
+            self.interval = self.dynamic_intervals[step - 1]
 
-    def __init__(self,
-                 dataloader,
-                 start=None,
-                 interval=1,
-                 tmpdir=None,
-                 gpu_collect=False,
-                 **eval_kwargs):
-        super().__init__(
-            dataloader, start=start, interval=interval, **eval_kwargs)
-        self.tmpdir = tmpdir
-        self.gpu_collect = gpu_collect
+    def before_train_epoch(self, runner):
+        """Evaluate the model only at the start of training by epoch."""
+        self._decide_interval(runner)
+        super().before_train_epoch(runner)
 
-    def after_train_epoch(self, runner):
-        if not self.evaluation_flag(runner):
+    def before_train_iter(self, runner):
+        self._decide_interval(runner)
+        super().before_train_iter(runner)
+
+    def _do_evaluate(self, runner):
+        """perform evaluation and save ckpt."""
+        # Synchronization of BatchNorm's buffer (running_mean
+        # and running_var) is not supported in the DDP of pytorch,
+        # which may cause the inconsistent performance of models in
+        # different ranks, so we broadcast BatchNorm's buffers
+        # of rank 0 to other ranks to avoid this.
+        if self.broadcast_bn_buffer:
+            model = runner.model
+            for name, module in model.named_modules():
+                if isinstance(module,
+                              _BatchNorm) and module.track_running_stats:
+                    dist.broadcast(module.running_var, 0)
+                    dist.broadcast(module.running_mean, 0)
+
+        if not self._should_evaluate(runner):
             return
-        from mmdet.apis import multi_gpu_test
+
         tmpdir = self.tmpdir
         if tmpdir is None:
             tmpdir = osp.join(runner.work_dir, '.eval_hook')
+
+        from mmdet.apis import multi_gpu_test
+
+        # Changed results to self.results so that MMDetWandbHook can access
+        # the evaluation results and log them to wandb.
         results = multi_gpu_test(
             runner.model,
             self.dataloader,
             tmpdir=tmpdir,
             gpu_collect=self.gpu_collect)
+        self.latest_results = results
         if runner.rank == 0:
             print('\n')
-            self.evaluate(runner, results)
+            runner.log_buffer.output['eval_iter_num'] = len(self.dataloader)
+            key_score = self.evaluate(runner, results)
+
+            # the key_score may be `None` so it needs to skip
+            # the action to save the best checkpoint
+            if self.save_best and key_score:
+                self._save_ckpt(runner, key_score)

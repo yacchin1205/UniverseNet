@@ -6,11 +6,11 @@ import tempfile
 import mmcv
 import numpy as np
 from mmcv.utils import print_log
-from pycocotools.coco import COCO
-from pycocotools.cocoeval import COCOeval as _COCOeval
 from terminaltables import AsciiTable
 
 from mmdet.core import eval_recalls
+from .api_wrappers import COCO
+from .api_wrappers import COCOeval as _COCOeval
 from .builder import DATASETS
 from .custom import CustomDataset
 from .nightowls_cocoeval import COCOeval as NightOwlsCOCOeval
@@ -20,6 +20,8 @@ from .nightowls_cocoeval import COCOeval as NightOwlsCOCOeval
 class NightOwlsDataset(CustomDataset):
 
     CLASSES = ('pedestrian', 'bicycledriver', 'motorbikedriver')
+
+    PALETTE = [(0, 255, 0), (0, 0, 255), (255, 0, 0)]
 
     def load_annotations(self, ann_file):
         """Load annotation from COCO style annotation file.

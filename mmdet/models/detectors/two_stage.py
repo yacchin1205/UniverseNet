@@ -1,7 +1,8 @@
-import torch
-import torch.nn as nn
+# Copyright (c) OpenMMLab. All rights reserved.
+import warnings
 
-# from mmdet.core import bbox2result, bbox2roi, build_assigner, build_sampler
+import torch
+
 from ..builder import DETECTORS, build_backbone, build_head, build_neck
 from .base import BaseDetector
 
@@ -21,9 +22,17 @@ class TwoStageDetector(BaseDetector):
                  roi_head=None,
                  train_cfg=None,
                  test_cfg=None,
-                 pretrained=None):
-        super(TwoStageDetector, self).__init__()
+                 pretrained=None,
+                 init_cfg=None):
+        super(TwoStageDetector, self).__init__(init_cfg)
+        if pretrained:
+            warnings.warn('DeprecationWarning: pretrained is deprecated, '
+                          'please use "init_cfg" instead')
+            backbone.pretrained = pretrained
         self.backbone = build_backbone(backbone)
+        self.use_cbnet = hasattr(self.backbone, 'cb_num_modules')
+        if self.use_cbnet:
+            self.forward_train = self.forward_train_cbnet
 
         if neck is not None:
             self.neck = build_neck(neck)
@@ -40,12 +49,11 @@ class TwoStageDetector(BaseDetector):
             rcnn_train_cfg = train_cfg.rcnn if train_cfg is not None else None
             roi_head.update(train_cfg=rcnn_train_cfg)
             roi_head.update(test_cfg=test_cfg.rcnn)
+            roi_head.pretrained = pretrained
             self.roi_head = build_head(roi_head)
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
-
-        self.init_weights(pretrained=pretrained)
 
     @property
     def with_rpn(self):
@@ -57,26 +65,6 @@ class TwoStageDetector(BaseDetector):
         """bool: whether the detector has a RoI head"""
         return hasattr(self, 'roi_head') and self.roi_head is not None
 
-    def init_weights(self, pretrained=None):
-        """Initialize the weights in detector.
-
-        Args:
-            pretrained (str, optional): Path to pre-trained weights.
-                Defaults to None.
-        """
-        super(TwoStageDetector, self).init_weights(pretrained)
-        self.backbone.init_weights(pretrained=pretrained)
-        if self.with_neck:
-            if isinstance(self.neck, nn.Sequential):
-                for m in self.neck:
-                    m.init_weights()
-            else:
-                self.neck.init_weights()
-        if self.with_rpn:
-            self.rpn_head.init_weights()
-        if self.with_roi_head:
-            self.roi_head.init_weights(pretrained)
-
     def extract_feat(self, img):
         """Directly extract features from the backbone+neck."""
         x = self.backbone(img)
@@ -87,7 +75,7 @@ class TwoStageDetector(BaseDetector):
     def forward_dummy(self, img):
         """Used for computing network flops.
 
-        See `mmdetection/tools/get_flops.py`
+        See `mmdetection/tools/analysis_tools/get_flops.py`
         """
         outs = ()
         # backbone
@@ -153,7 +141,8 @@ class TwoStageDetector(BaseDetector):
                 gt_bboxes,
                 gt_labels=None,
                 gt_bboxes_ignore=gt_bboxes_ignore,
-                proposal_cfg=proposal_cfg)
+                proposal_cfg=proposal_cfg,
+                **kwargs)
             losses.update(rpn_losses)
         else:
             proposal_list = proposals
@@ -186,10 +175,9 @@ class TwoStageDetector(BaseDetector):
 
     def simple_test(self, img, img_metas, proposals=None, rescale=False):
         """Test without augmentation."""
+
         assert self.with_bbox, 'Bbox head must be implemented.'
-
         x = self.extract_feat(img)
-
         if proposals is None:
             proposal_list = self.rpn_head.simple_test_rpn(x, img_metas)
         else:
@@ -204,8 +192,123 @@ class TwoStageDetector(BaseDetector):
         If rescale is False, then returned bboxes and masks will fit the scale
         of imgs[0].
         """
-        # recompute feats to save memory
         x = self.extract_feats(imgs)
         proposal_list = self.rpn_head.aug_test_rpn(x, img_metas)
         return self.roi_head.aug_test(
             x, proposal_list, img_metas, rescale=rescale)
+
+    def onnx_export(self, img, img_metas):
+
+        img_shape = torch._shape_as_tensor(img)[2:]
+        img_metas[0]['img_shape_for_onnx'] = img_shape
+        x = self.extract_feat(img)
+        proposals = self.rpn_head.onnx_export(x, img_metas)
+        if hasattr(self.roi_head, 'onnx_export'):
+            return self.roi_head.onnx_export(x, proposals, img_metas)
+        else:
+            raise NotImplementedError(
+                f'{self.__class__.__name__} can not '
+                f'be exported to ONNX. Please refer to the '
+                f'list of supported models,'
+                f'https://mmdetection.readthedocs.io/en/latest/tutorials/pytorch2onnx.html#list-of-supported-models-exportable-to-onnx'  # noqa E501
+            )
+
+    @staticmethod
+    def _update_loss_for_cbnet(losses, idx, weight):
+        """update loss for CBNetV2 by replacing keys and weighting values."""
+        new_losses = dict()
+        for k, v in losses.items():
+            new_k = f'{k}{idx}'
+            if weight != 1 and 'loss' in k:
+                new_k += f'_w{weight}'
+            if isinstance(v, (list, tuple)):
+                new_losses[new_k] = [each_v * weight for each_v in v]
+            else:
+                new_losses[new_k] = v * weight
+        return new_losses
+
+    def forward_train_cbnet(self,
+                            img,
+                            img_metas,
+                            gt_bboxes,
+                            gt_labels,
+                            gt_bboxes_ignore=None,
+                            gt_masks=None,
+                            proposals=None,
+                            **kwargs):
+        """Forward function for training CBNetV2.
+
+        Args:
+            img (Tensor): of shape (N, C, H, W) encoding input images.
+                Typically these should be mean centered and std scaled.
+
+            img_metas (list[dict]): list of image info dict where each dict
+                has: 'img_shape', 'scale_factor', 'flip', and may also contain
+                'filename', 'ori_shape', 'pad_shape', and 'img_norm_cfg'.
+                For details on the values of these keys see
+                `mmdet/datasets/pipelines/formatting.py:Collect`.
+
+            gt_bboxes (list[Tensor]): Ground truth bboxes for each image with
+                shape (num_gts, 4) in [tl_x, tl_y, br_x, br_y] format.
+
+            gt_labels (list[Tensor]): class indices corresponding to each box
+
+            gt_bboxes_ignore (None | list[Tensor]): specify which bounding
+                boxes can be ignored when computing the loss.
+
+            gt_masks (None | Tensor) : true segmentation masks for each box
+                used if the architecture supports a segmentation task.
+
+            proposals : override rpn proposals with custom proposals. Use when
+                `with_rpn` is False.
+
+        Returns:
+            dict[str, Tensor]: a dictionary of loss components
+        """
+        xs = self.extract_feat(img)
+
+        if not isinstance(xs[0], (list, tuple)):
+            xs = [xs]
+        cb_loss_weights = self.train_cfg.get('cb_loss_weights')
+        if cb_loss_weights is None:
+            if len(xs) > 1:
+                # refer CBNetV2 paper
+                cb_loss_weights = [0.5] + [1] * (len(xs) - 1)
+            else:
+                cb_loss_weights = [1]
+        assert len(cb_loss_weights) == len(xs)
+
+        losses = dict()
+
+        # RPN forward and loss
+        if self.with_rpn:
+            proposal_cfg = self.train_cfg.get('rpn_proposal',
+                                              self.test_cfg.rpn)
+            for i, x in enumerate(xs):
+                rpn_losses, proposal_list = self.rpn_head.forward_train(
+                    x,
+                    img_metas,
+                    gt_bboxes,
+                    gt_labels=None,
+                    gt_bboxes_ignore=gt_bboxes_ignore,
+                    proposal_cfg=proposal_cfg,
+                    **kwargs)
+                if len(xs) > 1:
+                    rpn_losses = self._update_loss_for_cbnet(
+                        rpn_losses, idx=i, weight=cb_loss_weights[i])
+                losses.update(rpn_losses)
+        else:
+            proposal_list = proposals
+
+        for i, x in enumerate(xs):
+            roi_losses = self.roi_head.forward_train(x, img_metas,
+                                                     proposal_list, gt_bboxes,
+                                                     gt_labels,
+                                                     gt_bboxes_ignore,
+                                                     gt_masks, **kwargs)
+            if len(xs) > 1:
+                roi_losses = self._update_loss_for_cbnet(
+                    roi_losses, idx=i, weight=cb_loss_weights[i])
+            losses.update(roi_losses)
+
+        return losses

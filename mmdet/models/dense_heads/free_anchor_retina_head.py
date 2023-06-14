@@ -1,9 +1,12 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import torch
 import torch.nn.functional as F
 
 from mmdet.core import bbox_overlaps
 from ..builder import HEADS
 from .retina_head import RetinaHead
+
+EPS = 1e-12
 
 
 @HEADS.register_module()
@@ -74,9 +77,10 @@ class FreeAnchorRetinaHead(RetinaHead):
             dict[str, Tensor]: A dictionary of loss components.
         """
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
-        assert len(featmap_sizes) == len(self.anchor_generator.base_anchors)
-
-        anchor_list, _ = self.get_anchors(featmap_sizes, img_metas)
+        assert len(featmap_sizes) == self.prior_generator.num_levels
+        device = cls_scores[0].device
+        anchor_list, _ = self.get_anchors(
+            featmap_sizes, img_metas, device=device)
         anchors = [torch.cat(anchor) for anchor in anchor_list]
 
         # concatenate each level
@@ -224,7 +228,7 @@ class FreeAnchorRetinaHead(RetinaHead):
         :math:`P_{ij}^{loc}`: matched_box_prob, box probability of matched samples.
 
         Args:
-            matched_cls_prob (Tensor): Classification probabilty of matched
+            matched_cls_prob (Tensor): Classification probability of matched
                 samples in shape (num_gt, pre_anchor_topk).
             matched_box_prob (Tensor): BBox probability of matched samples,
                 in shape (num_gt, pre_anchor_topk).
@@ -260,6 +264,9 @@ class FreeAnchorRetinaHead(RetinaHead):
             Tensor: Negative bag loss in shape (num_img, num_anchors, num_classes).
         """  # noqa: E501, W605
         prob = cls_prob * (1 - box_prob)
+        # There are some cases when neg_prob = 0.
+        # This will cause the neg_prob.log() to be inf without clamp.
+        prob = prob.clamp(min=EPS, max=1 - EPS)
         negative_bag_loss = prob**self.gamma * F.binary_cross_entropy(
             prob, torch.zeros_like(prob), reduction='none')
         return (1 - self.alpha) * negative_bag_loss

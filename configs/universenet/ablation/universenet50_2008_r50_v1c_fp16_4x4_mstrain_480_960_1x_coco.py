@@ -1,11 +1,10 @@
 _base_ = [
-    '../../_base_/models/universenet50_2008.py',
+    '../../universenet/models/universenet50_2008.py',
     '../../_base_/datasets/coco_detection_mstrain_480_960.py',
     '../../_base_/schedules/schedule_1x.py', '../../_base_/default_runtime.py'
 ]
 
 model = dict(
-    pretrained='open-mmlab://resnet50_v1c',
     backbone=dict(
         _delete_=True,
         type='ResNet',
@@ -18,7 +17,9 @@ model = dict(
         norm_eval=False,
         style='pytorch',
         dcn=dict(type='DCN', deform_groups=1, fallback_on_stride=False),
-        stage_with_dcn=(False, False, False, True)))
+        stage_with_dcn=(False, False, False, True),
+        init_cfg=dict(
+            type='Pretrained', checkpoint='open-mmlab://resnet50_v1c')))
 
 data = dict(samples_per_gpu=4)
 

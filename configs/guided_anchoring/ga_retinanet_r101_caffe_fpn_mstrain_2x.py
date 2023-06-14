@@ -1,7 +1,8 @@
+_base_ = '../_base_/default_runtime.py'
+
 # model settings
 model = dict(
     type='RetinaNet',
-    pretrained='open-mmlab://detectron2/resnet101_caffe',
     backbone=dict(
         type='ResNet',
         depth=101,
@@ -10,7 +11,10 @@ model = dict(
         frozen_stages=1,
         norm_cfg=dict(type='BN', requires_grad=False),
         norm_eval=True,
-        style='caffe'),
+        style='caffe',
+        init_cfg=dict(
+            type='Pretrained',
+            checkpoint='open-mmlab://detectron2/resnet101_caffe')),
     neck=dict(
         type='FPN',
         in_channels=[256, 512, 1024, 2048],
@@ -20,7 +24,7 @@ model = dict(
         num_outs=5),
     bbox_head=dict(
         type='GARetinaHead',
-        num_classes=81,
+        num_classes=80,
         in_channels=256,
         stacked_convs=4,
         feat_channels=256,
@@ -57,38 +61,38 @@ model = dict(
             gamma=2.0,
             alpha=0.25,
             loss_weight=1.0),
-        loss_bbox=dict(type='SmoothL1Loss', beta=0.04, loss_weight=1.0)))
-# training and testing settings
-train_cfg = dict(
-    ga_assigner=dict(
-        type='ApproxMaxIoUAssigner',
-        pos_iou_thr=0.5,
-        neg_iou_thr=0.4,
-        min_pos_iou=0.4,
-        ignore_iof_thr=-1),
-    ga_sampler=dict(
-        type='RandomSampler',
-        num=256,
-        pos_fraction=0.5,
-        neg_pos_ub=-1,
-        add_gt_as_proposals=False),
-    assigner=dict(
-        type='MaxIoUAssigner',
-        pos_iou_thr=0.5,
-        neg_iou_thr=0.5,
-        min_pos_iou=0.0,
-        ignore_iof_thr=-1),
-    allowed_border=-1,
-    pos_weight=-1,
-    center_ratio=0.2,
-    ignore_ratio=0.5,
-    debug=False)
-test_cfg = dict(
-    nms_pre=1000,
-    min_bbox_size=0,
-    score_thr=0.05,
-    nms=dict(type='nms', iou_threshold=0.5),
-    max_per_img=100)
+        loss_bbox=dict(type='SmoothL1Loss', beta=0.04, loss_weight=1.0)),
+    # training and testing settings
+    train_cfg=dict(
+        ga_assigner=dict(
+            type='ApproxMaxIoUAssigner',
+            pos_iou_thr=0.5,
+            neg_iou_thr=0.4,
+            min_pos_iou=0.4,
+            ignore_iof_thr=-1),
+        ga_sampler=dict(
+            type='RandomSampler',
+            num=256,
+            pos_fraction=0.5,
+            neg_pos_ub=-1,
+            add_gt_as_proposals=False),
+        assigner=dict(
+            type='MaxIoUAssigner',
+            pos_iou_thr=0.5,
+            neg_iou_thr=0.5,
+            min_pos_iou=0.0,
+            ignore_iof_thr=-1),
+        allowed_border=-1,
+        pos_weight=-1,
+        center_ratio=0.2,
+        ignore_ratio=0.5,
+        debug=False),
+    test_cfg=dict(
+        nms_pre=1000,
+        min_bbox_size=0,
+        score_thr=0.05,
+        nms=dict(type='nms', iou_threshold=0.5),
+        max_per_img=100))
 # dataset settings
 dataset_type = 'CocoDataset'
 data_root = 'data/coco/'
@@ -144,8 +148,7 @@ data = dict(
 evaluation = dict(interval=1, metric='bbox')
 # optimizer
 optimizer = dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001)
-optimizer_config = dict(
-    _delete_=True, grad_clip=dict(max_norm=35, norm_type=2))
+optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 # learning policy
 lr_config = dict(
     policy='step',
@@ -163,10 +166,4 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-total_epochs = 24
-dist_params = dict(backend='nccl')
-log_level = 'INFO'
-work_dir = './work_dirs/ga_retinanet_r101_caffe_fpn_mstrain_2x'
-load_from = None
-resume_from = None
-workflow = [('train', 1)]
+runner = dict(type='EpochBasedRunner', max_epochs=24)

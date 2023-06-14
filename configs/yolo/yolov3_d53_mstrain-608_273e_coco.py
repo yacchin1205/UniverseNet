@@ -2,8 +2,11 @@ _base_ = '../_base_/default_runtime.py'
 # model settings
 model = dict(
     type='YOLOV3',
-    pretrained='open-mmlab://darknet53',
-    backbone=dict(type='Darknet', depth=53, out_indices=(3, 4, 5)),
+    backbone=dict(
+        type='Darknet',
+        depth=53,
+        out_indices=(3, 4, 5),
+        init_cfg=dict(type='Pretrained', checkpoint='open-mmlab://darknet53')),
     neck=dict(
         type='YOLOV3Neck',
         num_scales=3,
@@ -37,18 +40,21 @@ model = dict(
             use_sigmoid=True,
             loss_weight=2.0,
             reduction='sum'),
-        loss_wh=dict(type='MSELoss', loss_weight=2.0, reduction='sum')))
-# training and testing settings
-train_cfg = dict(
-    assigner=dict(
-        type='GridAssigner', pos_iou_thr=0.5, neg_iou_thr=0.5, min_pos_iou=0))
-test_cfg = dict(
-    nms_pre=1000,
-    min_bbox_size=0,
-    score_thr=0.05,
-    conf_thr=0.005,
-    nms=dict(type='nms', iou_thr=0.45),
-    max_per_img=100)
+        loss_wh=dict(type='MSELoss', loss_weight=2.0, reduction='sum')),
+    # training and testing settings
+    train_cfg=dict(
+        assigner=dict(
+            type='GridAssigner',
+            pos_iou_thr=0.5,
+            neg_iou_thr=0.5,
+            min_pos_iou=0)),
+    test_cfg=dict(
+        nms_pre=1000,
+        min_bbox_size=0,
+        score_thr=0.05,
+        conf_thr=0.005,
+        nms=dict(type='nms', iou_threshold=0.45),
+        max_per_img=100))
 # dataset settings
 dataset_type = 'CocoDataset'
 data_root = 'data/coco/'
@@ -56,7 +62,6 @@ img_norm_cfg = dict(mean=[0, 0, 0], std=[255., 255., 255.], to_rgb=True)
 train_pipeline = [
     dict(type='LoadImageFromFile', to_float32=True),
     dict(type='LoadAnnotations', with_bbox=True),
-    dict(type='PhotoMetricDistortion'),
     dict(
         type='Expand',
         mean=img_norm_cfg['mean'],
@@ -68,6 +73,7 @@ train_pipeline = [
         min_crop_size=0.3),
     dict(type='Resize', img_scale=[(320, 320), (608, 608)], keep_ratio=True),
     dict(type='RandomFlip', flip_ratio=0.5),
+    dict(type='PhotoMetricDistortion'),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
     dict(type='DefaultFormatBundle'),
@@ -117,5 +123,10 @@ lr_config = dict(
     warmup_ratio=0.1,
     step=[218, 246])
 # runtime settings
-total_epochs = 273
+runner = dict(type='EpochBasedRunner', max_epochs=273)
 evaluation = dict(interval=1, metric=['bbox'])
+
+# NOTE: `auto_scale_lr` is for automatically scaling LR,
+# USER SHOULD NOT CHANGE ITS VALUES.
+# base_batch_size = (8 GPUs) x (8 samples per GPU)
+auto_scale_lr = dict(base_batch_size=64)

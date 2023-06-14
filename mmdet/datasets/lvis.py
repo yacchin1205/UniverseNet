@@ -1,7 +1,10 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import itertools
 import logging
 import os.path as osp
 import tempfile
+import warnings
+from collections import OrderedDict
 
 import numpy as np
 from mmcv.utils import print_log
@@ -145,7 +148,7 @@ class LVISV05Dataset(CocoDataset):
         'life_jacket', 'lightbulb', 'lightning_rod', 'lime', 'limousine',
         'linen_paper', 'lion', 'lip_balm', 'lipstick', 'liquor', 'lizard',
         'Loafer_(type_of_shoe)', 'log', 'lollipop', 'lotion',
-        'speaker_(stero_equipment)', 'loveseat', 'machine_gun', 'magazine',
+        'speaker_(stereo_equipment)', 'loveseat', 'machine_gun', 'magazine',
         'magnet', 'mail_slot', 'mailbox_(at_home)', 'mallet', 'mammoth',
         'mandarin_orange', 'manger', 'manhole', 'map', 'marker', 'martini',
         'mascot', 'mashed_potato', 'masher', 'mask', 'mast',
@@ -264,6 +267,8 @@ class LVISV05Dataset(CocoDataset):
         'wrench', 'wristband', 'wristlet', 'yacht', 'yak', 'yogurt',
         'yoke_(animal_equipment)', 'zebra', 'zucchini')
 
+    PALETTE = None
+
     def load_annotations(self, ann_file):
         """Load annotation from lvis style annotation file.
 
@@ -276,19 +281,16 @@ class LVISV05Dataset(CocoDataset):
 
         try:
             import lvis
-            assert lvis.__version__ >= '10.5.3'
+            if getattr(lvis, '__version__', '0') >= '10.5.3':
+                warnings.warn(
+                    'mmlvis is deprecated, please install official lvis-api by "pip install git+https://github.com/lvis-dataset/lvis-api.git"',  # noqa: E501
+                    UserWarning)
             from lvis import LVIS
-        except AssertionError:
-            raise AssertionError('Incompatible version of lvis is installed. '
-                                 'Run pip uninstall lvis first. Then run pip '
-                                 'install mmlvis to install open-mmlab forked '
-                                 'lvis. ')
         except ImportError:
-            raise ImportError('Package lvis is not installed. Please run pip '
-                              'install mmlvis to install open-mmlab forked '
-                              'lvis.')
+            raise ImportError(
+                'Package lvis is not installed. Please run "pip install git+https://github.com/lvis-dataset/lvis-api.git".'  # noqa: E501
+            )
         self.coco = LVIS(ann_file)
-        assert not self.custom_classes, 'LVIS custom classes is not supported'
         self.cat_ids = self.coco.get_cat_ids()
         self.cat2label = {cat_id: i for i, cat_id in enumerate(self.cat_ids)}
         self.img_ids = self.coco.get_img_ids()
@@ -337,17 +339,15 @@ class LVISV05Dataset(CocoDataset):
 
         try:
             import lvis
-            assert lvis.__version__ >= '10.5.3'
-            from lvis import LVISResults, LVISEval
-        except AssertionError:
-            raise AssertionError('Incompatible version of lvis is installed. '
-                                 'Run pip uninstall lvis first. Then run pip '
-                                 'install mmlvis to install open-mmlab forked '
-                                 'lvis. ')
+            if getattr(lvis, '__version__', '0') >= '10.5.3':
+                warnings.warn(
+                    'mmlvis is deprecated, please install official lvis-api by "pip install git+https://github.com/lvis-dataset/lvis-api.git"',  # noqa: E501
+                    UserWarning)
+            from lvis import LVISEval, LVISResults
         except ImportError:
-            raise ImportError('Package lvis is not installed. Please run pip '
-                              'install mmlvis to install open-mmlab forked '
-                              'lvis.')
+            raise ImportError(
+                'Package lvis is not installed. Please run "pip install git+https://github.com/lvis-dataset/lvis-api.git".'  # noqa: E501
+            )
         assert isinstance(results, list), 'results must be a list'
         assert len(results) == len(self), (
             'The length of results is not equal to the dataset len: {} != {}'.
@@ -366,7 +366,7 @@ class LVISV05Dataset(CocoDataset):
             tmp_dir = None
         result_files = self.results2json(results, jsonfile_prefix)
 
-        eval_results = {}
+        eval_results = OrderedDict()
         # get original api
         lvis_gt = self.coco
         for metric in metrics:
@@ -426,8 +426,10 @@ class LVISV05Dataset(CocoDataset):
                     for idx, catId in enumerate(self.cat_ids):
                         # area range index 0: all area ranges
                         # max dets index -1: typically 100 per image
-                        nm = self.coco.load_cats(catId)[0]
-                        precision = precisions[:, :, idx, 0, -1]
+                        # the dimensions of precisions are
+                        # [num_thrs, num_recalls, num_cats, num_area_rngs]
+                        nm = self.coco.load_cats([catId])[0]
+                        precision = precisions[:, :, idx, 0]
                         precision = precision[precision > -1]
                         if precision.size:
                             ap = np.mean(precision)
@@ -597,7 +599,7 @@ class LVISV1Dataset(LVISDataset):
         'legging_(clothing)', 'Lego', 'legume', 'lemon', 'lemonade', 'lettuce',
         'license_plate', 'life_buoy', 'life_jacket', 'lightbulb',
         'lightning_rod', 'lime', 'limousine', 'lion', 'lip_balm', 'liquor',
-        'lizard', 'log', 'lollipop', 'speaker_(stero_equipment)', 'loveseat',
+        'lizard', 'log', 'lollipop', 'speaker_(stereo_equipment)', 'loveseat',
         'machine_gun', 'magazine', 'magnet', 'mail_slot', 'mailbox_(at_home)',
         'mallard', 'mallet', 'mammoth', 'manatee', 'mandarin_orange', 'manger',
         'manhole', 'map', 'marker', 'martini', 'mascot', 'mashed_potato',
@@ -715,19 +717,16 @@ class LVISV1Dataset(LVISDataset):
     def load_annotations(self, ann_file):
         try:
             import lvis
-            assert lvis.__version__ >= '10.5.3'
+            if getattr(lvis, '__version__', '0') >= '10.5.3':
+                warnings.warn(
+                    'mmlvis is deprecated, please install official lvis-api by "pip install git+https://github.com/lvis-dataset/lvis-api.git"',  # noqa: E501
+                    UserWarning)
             from lvis import LVIS
-        except AssertionError:
-            raise AssertionError('Incompatible version of lvis is installed. '
-                                 'Run pip uninstall lvis first. Then run pip '
-                                 'install mmlvis to install open-mmlab forked '
-                                 'lvis. ')
         except ImportError:
-            raise ImportError('Package lvis is not installed. Please run pip '
-                              'install mmlvis to install open-mmlab forked '
-                              'lvis.')
+            raise ImportError(
+                'Package lvis is not installed. Please run "pip install git+https://github.com/lvis-dataset/lvis-api.git".'  # noqa: E501
+            )
         self.coco = LVIS(ann_file)
-        assert not self.custom_classes, 'LVIS custom classes is not supported'
         self.cat_ids = self.coco.get_cat_ids()
         self.cat2label = {cat_id: i for i, cat_id in enumerate(self.cat_ids)}
         self.img_ids = self.coco.get_img_ids()
